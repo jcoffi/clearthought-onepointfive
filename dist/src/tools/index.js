@@ -3,6 +3,7 @@ import { EphemeralNotebookStore } from "../notebook/EphemeralNotebook.js";
 import { getPresetForPattern } from "../notebook/presets.js";
 import { executePython } from "../utils/execution.js";
 import { enhanceResponseWithNotebook } from "./notebookEnhancement.js";
+import { validateParameters } from "./paramSchemas.js";
 // Initialize notebook store
 const notebookStore = new EphemeralNotebookStore();
 /**
@@ -408,6 +409,15 @@ export async function handleClearThoughtTool(sessionState, args) {
         }
         // Execute the main operation
         const result = await executeClearThoughtOperation(sessionState, args.operation, { prompt: args.prompt, parameters: args.parameters });
+        // Invalid parameters: report the error as-is (no seed thought, flagged as error).
+        if (result.success === false && Array.isArray(result.issues)) {
+            return {
+                content: [
+                    { type: "text", text: JSON.stringify(result, null, 2) },
+                ],
+                isError: true,
+            };
+        }
         const enriched = shouldSeed
             ? {
                 ...result,
@@ -462,6 +472,30 @@ export function registerTools(server, sessionState) {
  * @param args - Operation arguments
  */
 export async function executeClearThoughtOperation(sessionState, operation, args) {
+    // Validate and normalize the untyped parameters bag (aliases, coercions,
+    // field-level errors). Handlers only ever see well-typed values.
+    const validation = validateParameters(operation, args.parameters);
+    // `=== false` (not `!ok`) so the union narrows even without strictNullChecks,
+    // which is how the dist build (`build:stdio`) compiles.
+    if (validation.ok === false) {
+        return {
+            toolOperation: operation,
+            success: false,
+            error: `Invalid parameters for ${operation}: ${validation.issues.join("; ")}`,
+            issues: validation.issues,
+            hint: "Fix the listed fields and call again. Unknown keys are ignored; only the listed fields are a problem.",
+        };
+    }
+    const result = await executeValidatedOperation(sessionState, operation, {
+        prompt: args.prompt,
+        parameters: validation.data,
+    });
+    return validation.warnings.length > 0
+        ? { ...result, warnings: validation.warnings }
+        : result;
+}
+/** Runs an operation whose parameters have already been validated. */
+async function executeValidatedOperation(sessionState, operation, args) {
     const { prompt, parameters = {} } = args;
     // Optional reasoning pattern selection for sequential_thinking
     const specifiedPattern = parameters.pattern;

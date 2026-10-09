@@ -41,9 +41,12 @@ describe("decision_framework with string options/criteria", () => {
 		expect(out.suggestedNextStage).toBe("gather-more-data");
 	});
 
-	it("drops null entries but keeps the valid ones", async () => {
+	it("rejects null/number entries and names each offending index", async () => {
 		const out = await run({ criteria: [null, "speed", 5, { name: "cost" }] });
-		expect(out.criteria).toEqual(["speed", { name: "cost" }]);
+		expect(out.success).toBe(false);
+		expect(out.issues).toHaveLength(2);
+		expect(out.issues[0]).toContain("parameters.criteria[0]");
+		expect(out.issues[1]).toContain("parameters.criteria[2]");
 	});
 });
 
@@ -78,17 +81,24 @@ describe("decision_framework with object options/criteria", () => {
 		).resolves.toBeDefined();
 	});
 
-	it("expected-utility ignores malformed outcomes and options", async () => {
+	it("expected-utility works with a stray string option and well-formed outcomes", async () => {
 		const out = await run({
 			analysisType: "expected-utility",
-			options: [{ name: "a" }, "stray", null],
-			possibleOutcomes: [
-				{ option: "a", probability: 0.5, value: 10 },
-				null,
-				"bad",
-			],
+			options: [{ name: "a" }, "stray"],
+			possibleOutcomes: [{ option: "a", probability: 0.5, value: 10 }],
 		});
 		expect(out.expectedValues).toEqual({ a: 5 });
 		expect(out.recommendation).toBe("a");
+	});
+
+	it("expected-utility rejects malformed outcomes and options by index", async () => {
+		const out = await run({
+			analysisType: "expected-utility",
+			options: [{ name: "a" }, null],
+			possibleOutcomes: [{ option: "a", probability: 0.5, value: 10 }, "bad"],
+		});
+		expect(out.success).toBe(false);
+		expect(out.issues.join(" ")).toContain("parameters.options[1]");
+		expect(out.issues.join(" ")).toContain("parameters.possibleOutcomes[1]");
 	});
 });
