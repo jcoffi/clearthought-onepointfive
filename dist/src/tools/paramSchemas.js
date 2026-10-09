@@ -12,9 +12,12 @@
  *  - Anything else wrong is rejected with a field-level message
  *    (`parameters.graph: expected an object {...}, got string "..."`), reported
  *    as a returned error result, never a thrown exception.
- *  - Harmless-but-unusable input (see `softObj`) is accepted and reported in a
- *    `warnings` list instead of being rejected, so flows that already worked keep
- *    working without the ignored value being silent.
+ *  - Harmless-but-unusable input (see `softObj`/`softStr`) is accepted and
+ *    reported in a `warnings` list instead of being rejected, so flows that
+ *    already worked keep working without the ignored value being silent.
+ *  - Keys no handler reads are still passed through, but are listed in a
+ *    `warnings` entry (with the keys the operation does read), so dropped input
+ *    is never silent. Internal `__` keys and aliases are not reported.
  *  - Only fields a handler *computes with* are typed (lists it iterates, objects
  *    it indexes, numbers it does arithmetic on, booleans that gate logic).
  *    Echo-only fields are `any`, so calls that already worked keep working.
@@ -167,6 +170,16 @@ const softObj = (expected) => z.unknown().transform((v, ctx) => {
     }
     return v;
 });
+/** A string field that, when given something else, is ignored with a warning. */
+const softStr = (expected) => z.unknown().transform((v, ctx) => {
+    if (v === undefined || v === null)
+        return undefined;
+    if (typeof v !== "string") {
+        activeWarnings?.push(`parameters.${formatPath(ctx.path)}: expected ${expected}, got ${describeValue(v)}; ignored`);
+        return undefined;
+    }
+    return v;
+});
 const obj = z.unknown().transform((v, ctx) => {
     if (v === undefined || v === null)
         return undefined;
@@ -252,6 +265,10 @@ const sequentialThinkingShape = {
     branchId: any,
     pattern: any,
     patternParams: obj,
+    // Thought text (preferred over the prompt when it is a non-blank string).
+    thought: softStr("a string"),
+    // Internal: set by pattern operations to stop re-dispatching.
+    __disablePatternDispatch: any,
 };
 const SHAPES = {
     sequential_thinking: sequentialThinkingShape,
@@ -349,6 +366,7 @@ const SHAPES = {
         data: list("number"),
         prior: record("number"),
         likelihood: record("number"),
+        effectSize: any,
         test: any,
         testStatistic: num,
         pValue: num,
@@ -430,6 +448,12 @@ const SHAPES = {
         evidence: list("string"),
         hypotheses: list("object"),
         includeExport: bool,
+        sessionId: any,
+        // Free text for each phase; each is recorded as a node of that phase.
+        observe: softStr("a string"),
+        orient: softStr("a string"),
+        decide: softStr("a string"),
+        act: softStr("a string"),
     },
     ulysses_protocol: {
         timeboxMs: num,
@@ -445,6 +469,8 @@ const SHAPES = {
         attemptAdvance: bool,
         makeFinalDecision: bool,
         includeExport: bool,
+        sessionId: any,
+        decisionRationale: any,
     },
 };
 /** Operations whose parameters are handled elsewhere or are free-form. */
@@ -456,6 +482,8 @@ export const EXEMPT_OPERATIONS = new Set([
     "notebook_run_cell",
 ]);
 export const hasParamSchema = (operation) => operation in SHAPES;
+/** Parameter keys an operation reads (undefined for operations without a schema). */
+export const paramKeysFor = (operation) => SHAPES[operation] ? Object.keys(SHAPES[operation]) : undefined;
 const compiled = new Map();
 const schemaFor = (operation) => {
     const shape = SHAPES[operation];
@@ -498,6 +526,11 @@ export function validateParameters(operation, parameters) {
         activeWarnings = null;
     }
     if (parsed.success) {
+        const shape = SHAPES[operation];
+        const ignored = Object.keys(input).filter((k) => !k.startsWith("__") && !(k in shape) && !(camelCase(k) in shape));
+        if (ignored.length > 0) {
+            warnings.push(`${ignored.map((k) => `parameters.${k}`).join(", ")}: not read by ${operation}, ignored. ${operation} reads: ${Object.keys(shape).filter((k) => !k.startsWith("__")).join(", ")}`);
+        }
         return {
             ok: true,
             data: parsed.data,
