@@ -1509,7 +1509,17 @@ export async function executeClearThoughtOperation(
 			 */
 			
 			// Use provided graph or extract from prompt
-			let graph = getParam("graph", { nodes: [], edges: [] }) as CausalGraph;
+			// Normalize: the model may send a string or a partial object, so accept
+			// only arrays and fall back to empty (which triggers prompt extraction).
+			const rawGraph = getParam("graph", {}) as Partial<CausalGraph> | unknown;
+			const rawGraphObj =
+				rawGraph && typeof rawGraph === "object"
+					? (rawGraph as Partial<CausalGraph>)
+					: {};
+			let graph: CausalGraph = {
+				nodes: Array.isArray(rawGraphObj.nodes) ? rawGraphObj.nodes : [],
+				edges: Array.isArray(rawGraphObj.edges) ? rawGraphObj.edges : [],
+			};
 			
 			// If no graph provided, extract from prompt using heuristics
 			if (graph.nodes.length === 0 && prompt) {
@@ -1554,7 +1564,12 @@ export async function executeClearThoughtOperation(
 			}
 			
 			// Calculate intervention effects if intervention provided
-			const intervention = parameters.intervention as Intervention | undefined;
+			const intervention =
+				parameters.intervention &&
+				typeof parameters.intervention === "object" &&
+				!Array.isArray(parameters.intervention)
+					? (parameters.intervention as Intervention)
+					: undefined;
 			let predictedEffects: Record<string, number> | undefined;
 			let counterfactual: Record<string, number> | undefined;
 			

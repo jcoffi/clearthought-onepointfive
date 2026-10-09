@@ -1278,7 +1278,16 @@ export async function executeClearThoughtOperation(sessionState, operation, args
              * If an intervention is specified, the model should predict downstream effects.
              */
             // Use provided graph or extract from prompt
-            let graph = getParam("graph", { nodes: [], edges: [] });
+            // Normalize: the model may send a string or a partial object, so accept
+            // only arrays and fall back to empty (which triggers prompt extraction).
+            const rawGraph = getParam("graph", {});
+            const rawGraphObj = rawGraph && typeof rawGraph === "object"
+                ? rawGraph
+                : {};
+            let graph = {
+                nodes: Array.isArray(rawGraphObj.nodes) ? rawGraphObj.nodes : [],
+                edges: Array.isArray(rawGraphObj.edges) ? rawGraphObj.edges : [],
+            };
             // If no graph provided, extract from prompt using heuristics
             if (graph.nodes.length === 0 && prompt) {
                 const text = prompt.toLowerCase();
@@ -1314,7 +1323,11 @@ export async function executeClearThoughtOperation(sessionState, operation, args
                 };
             }
             // Calculate intervention effects if intervention provided
-            const intervention = parameters.intervention;
+            const intervention = parameters.intervention &&
+                typeof parameters.intervention === "object" &&
+                !Array.isArray(parameters.intervention)
+                ? parameters.intervention
+                : undefined;
             let predictedEffects;
             let counterfactual;
             if (intervention && graph.edges.length > 0) {
