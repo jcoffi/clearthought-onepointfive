@@ -51,6 +51,15 @@ const asStringArray = (v: unknown): string[] =>
 			? [v]
 			: []
 		: asArray(v).filter((x): x is string => typeof x === "string");
+/**
+ * Array whose entries are strings or plain objects (what callers really send
+ * for lists such as decision options/criteria); null and other types are dropped.
+ */
+const asStringOrObjectArray = (v: unknown): Array<string | Record<string, any>> =>
+	asArray(v).filter(
+		(x): x is string | Record<string, any> =>
+			typeof x === "string" || isPlainObject(x),
+	);
 /** Array of finite numbers; anything else is dropped. */
 const asNumberArray = (v: unknown): number[] =>
 	asArray(v).filter(
@@ -1046,9 +1055,13 @@ export async function executeClearThoughtOperation(
 			 * - analysisType: 'expected-utility' | 'multi-criteria'
 			 */
 			
-			const options = (parameters.options as any[]) || [];
-			const criteria = asObjectArray(parameters.criteria);
-			const possibleOutcomes = (parameters.possibleOutcomes as any[]) || [];
+			// Options/criteria are echoed exactly as sent (callers often send plain
+			// name strings); only object entries carry the data needed for scoring.
+			const options = asStringOrObjectArray(parameters.options);
+			const criteria = asStringOrObjectArray(parameters.criteria);
+			const possibleOutcomes = asObjectArray(parameters.possibleOutcomes);
+			const scorableOptions = options.filter(isPlainObject);
+			const scorableCriteria = criteria.filter(isPlainObject);
 			const analysisType = getParam("analysisType", "multi-criteria") as string;
 			
 			let result: any = {};
@@ -1056,7 +1069,7 @@ export async function executeClearThoughtOperation(
 			if (analysisType === "expected-utility" && possibleOutcomes.length > 0) {
 				// Calculate expected values for each option
 				const expectedValues: Record<string, number> = {};
-				options.forEach(opt => {
+				scorableOptions.forEach(opt => {
 					const outcomes = possibleOutcomes.filter(o => o.option === opt.id || o.option === opt.name);
 					expectedValues[opt.id || opt.name] = outcomes.reduce((sum, o) => sum + (o.probability * o.value), 0);
 				});
@@ -1067,11 +1080,11 @@ export async function executeClearThoughtOperation(
 			} else if (analysisType === "multi-criteria" && criteria.length > 0) {
 				// Multi-criteria scoring
 				const scores: Record<string, number> = {};
-				const totalWeight = criteria.reduce((sum, c) => sum + (c.weight || 1), 0);
+				const totalWeight = scorableCriteria.reduce((sum, c) => sum + (c.weight || 1), 0);
 				
-				options.forEach(opt => {
+				scorableOptions.forEach(opt => {
 					let score = 0;
-					criteria.forEach(criterion => {
+					scorableCriteria.forEach(criterion => {
 						const value = opt.attributes?.[criterion.name] || 0;
 						const normalizedWeight = (criterion.weight || 1) / totalWeight;
 						score += value * normalizedWeight;
@@ -1852,8 +1865,10 @@ export async function executeClearThoughtOperation(
 			 * The model should define the optimization problem structure.
 			 */
 			
-			const variables = (parameters.variables as Record<string, {min: number, max: number, step?: number}>) || {};
-			const objective = (parameters.objective as string) || "";
+			const variables = Object.fromEntries(
+				Object.entries(asObject(parameters.variables)).filter(([, v]) => isPlainObject(v)),
+			) as Record<string, {min: number, max: number, step?: number}>;
+			const objective = asString(parameters.objective);
 			const iterations = getParam("iterations", 100);
 			const method = getParam("method", "grid") as "grid" | "hill";
 			
