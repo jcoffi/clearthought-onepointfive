@@ -689,8 +689,13 @@ async function executeValidatedOperation(
 		case "sequential_thinking": {
 			// Choose reasoning pattern (default 'chain') and optionally dispatch
 			const chosenPattern = selectReasoningPattern();
+			// `thought` (the original Sequential Thinking parameter) carries the
+			// thought text; the prompt is the fallback.
+			const thoughtText = asString(parameters.thought).trim()
+				? asString(parameters.thought)
+				: prompt;
 			const thoughtData = {
-				thought: prompt,
+				thought: thoughtText,
 				thoughtNumber: parameters.thoughtNumber || 1,
 				totalThoughts: parameters.totalThoughts || 1,
 				nextThoughtNeeded: parameters.nextThoughtNeeded || false,
@@ -1361,8 +1366,10 @@ async function executeValidatedOperation(
 
 		// -------------------- New modules --------------------
 		case "pdr_reasoning": {
-			// PDR uses sequential thinking with progressive refinement pattern
-			return await executeClearThoughtOperation(
+			// PDR uses sequential thinking with progressive refinement pattern.
+			// Parameters are already validated, so skip a second validation pass
+			// (which would repeat the ignored-key warning).
+			return await executeValidatedOperation(
 				sessionState,
 				"sequential_thinking",
 				{
@@ -2683,8 +2690,24 @@ async function executeValidatedOperation(
 			// Process the current phase
 			const evidence = asStringArray(parameters.evidence);
 
+			// Free text per phase (observe/orient/decide/act). The current phase's
+			// text becomes that node's content; other provided phases are recorded
+			// as nodes of their own phase. Evidence, quality and auto-advance still
+			// apply to the current phase only.
+			const oodaPhases = ["observe", "orient", "decide", "act"] as const;
+			const phaseTexts: Partial<Record<(typeof oodaPhases)[number], string>> = {};
+			for (const ph of oodaPhases) {
+				const text = asString(parameters[ph]).trim();
+				if (text) phaseTexts[ph] = text;
+			}
+			const currentPhase = oodaSession.currentPhase;
+
 			// Create node for current phase
-			const node = createOODANode(prompt, oodaSession.currentPhase, evidence);
+			const node = createOODANode(
+				phaseTexts[currentPhase] ?? prompt,
+				currentPhase,
+				evidence,
+			);
 
 			// Add hypotheses if provided
 			const hypotheses = asObjectArray<{
@@ -2709,8 +2732,19 @@ async function executeValidatedOperation(
 				new Date(oodaSession.loopStartTime || oodaSession.createdAt).getTime();
 			oodaSession.metrics.evidenceQuality = evaluateEvidenceQuality(node);
 
-			// Add node to session
-			oodaSession.nodes.push(node);
+			// Add nodes to the session in OODA order
+			const recordedPhases: string[] = [];
+			for (const ph of oodaPhases) {
+				if (ph === currentPhase) {
+					oodaSession.nodes.push(node);
+					recordedPhases.push(ph);
+				} else if (phaseTexts[ph]) {
+					const extra = createOODANode(phaseTexts[ph] as string, ph);
+					extra.id = `${extra.id}-${ph}`;
+					oodaSession.nodes.push(extra);
+					recordedPhases.push(ph);
+				}
+			}
 			oodaSession.iteration++;
 
 			// Track KPIs
@@ -2753,6 +2787,7 @@ async function executeValidatedOperation(
 			return {
 				toolOperation: "ooda_loop",
 				sessionId: oodaSessionId,
+				recordedPhases,
 				currentPhase: oodaSession.currentPhase,
 				loopNumber: oodaSession.loopNumber,
 				metrics: oodaSession.metrics,
