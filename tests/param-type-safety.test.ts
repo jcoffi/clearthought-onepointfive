@@ -100,13 +100,14 @@ describe("many wrong-typed parameters at once never throw", () => {
 });
 
 describe("lenient coercion keeps usable input", () => {
-	it("analogical_reasoning: non-string domains fall back to prompt extraction", async () => {
+	it("analogical_reasoning: non-string domains are rejected by field name", async () => {
 		const out = await run("analogical_reasoning", {
 			sourceDomain: 5,
 			targetDomain: { x: 1 },
 		});
-		expect(typeof out.sourceDomain).toBe("string");
-		expect(typeof out.targetDomain).toBe("string");
+		expect(out.success).toBe(false);
+		expect(out.issues.join(" ")).toContain("parameters.sourceDomain");
+		expect(out.issues.join(" ")).toContain("parameters.targetDomain");
 	});
 
 	it("socratic_method: a lone string premise is kept as one premise", async () => {
@@ -127,28 +128,35 @@ describe("lenient coercion keeps usable input", () => {
 		);
 	});
 
-	it("systems_thinking: null relationship entries are ignored, valid ones used", async () => {
+	it("systems_thinking: a null relationship entry is rejected with its index", async () => {
 		const out = await run("systems_thinking", {
 			relationships: [null, { from: "a", to: "b", type: "causes" }],
 		});
-		expect(out.relationships).toEqual([{ from: "a", to: "b", type: "causes" }]);
+		expect(out.success).toBe(false);
+		expect(out.issues[0]).toContain("parameters.relationships[0]");
 	});
 
-	it("decision_framework: null criteria entries are ignored", async () => {
+	it("decision_framework: a null criteria entry is rejected with its index", async () => {
 		const out = await run("decision_framework", {
 			options: [{ name: "x", scores: {} }],
 			criteria: [null, { name: "speed", weight: 2 }],
 		});
-		expect(out.criteria).toEqual([{ name: "speed", weight: 2 }]);
+		expect(out.success).toBe(false);
+		expect(out.issues[0]).toContain("parameters.criteria[0]");
 	});
 
-	it("statistical_reasoning: non-array data is treated as empty", async () => {
-		const out = await run("statistical_reasoning", { data: "1,2,3" });
-		expect(out.stats.n).toBe(0);
+	it("statistical_reasoning: non-numeric data is rejected, numeric strings accepted", async () => {
+		const bad = await run("statistical_reasoning", { data: "1,2,3" });
+		expect(bad.success).toBe(false);
+		expect(bad.issues[0]).toContain("parameters.data");
+		const good = await run("statistical_reasoning", { data: ["1", 2, "3"] });
+		expect(good.stats.n).toBe(3);
+		expect(good.stats.mean).toBe(2);
 	});
 
-	it("sequential_thinking: non-object patternParams is ignored", async () => {
+	it("sequential_thinking: non-object patternParams is rejected by field name", async () => {
 		const out = await run("sequential_thinking", { patternParams: "deep" });
-		expect(out.selectedPattern).toBe("chain");
+		expect(out.success).toBe(false);
+		expect(out.issues[0]).toContain("parameters.patternParams");
 	});
 });

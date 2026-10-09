@@ -35,12 +35,13 @@ describe("causal_analysis parameter handling", () => {
 		expect(out.graph.nodes.length).toBeGreaterThan(0);
 	});
 
-	it("does not crash when graph is a string; falls back to prompt extraction", async () => {
+	it("rejects a string graph with a clear field-level error instead of crashing", async () => {
 		const out = await run("cache layer increases latency", {
 			graph: "cache -> latency",
 		});
-		expect(out.error).toBeUndefined();
-		expect(out.graph.nodes.length).toBeGreaterThan(0);
+		expect(out.success).toBe(false);
+		expect(out.issues[0]).toContain("parameters.graph");
+		expect(out.issues[0]).toContain("object");
 	});
 
 	it("does not crash when graph lacks nodes/edges arrays", async () => {
@@ -59,7 +60,7 @@ describe("causal_analysis parameter handling", () => {
 		expect(out.graph.edges).toEqual([]);
 	});
 
-	it("ignores a non-object intervention", async () => {
+	it("accepts a free-text intervention, ignores it, and says so in warnings", async () => {
 		const out = await run("cache layer increases latency", {
 			graph: {
 				nodes: ["cache", "latency"],
@@ -67,7 +68,8 @@ describe("causal_analysis parameter handling", () => {
 			},
 			intervention: "cache",
 		});
-		expect(out.error).toBeUndefined();
+		expect(out.success).not.toBe(false);
 		expect(out.predictedEffects).toBeUndefined();
+		expect(out.warnings[0]).toContain("parameters.intervention");
 	});
 });
