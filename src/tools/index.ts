@@ -27,6 +27,37 @@ import { enhanceResponseWithNotebook } from "./notebookEnhancement.js";
 const notebookStore = new EphemeralNotebookStore();
 
 /**
+ * Parameter coercion helpers.
+ *
+ * `parameters` is an untyped bag (z.record(z.unknown())), so a caller can send
+ * any shape for any key. These helpers return the expected shape or an empty
+ * value, so handlers never throw on malformed input.
+ */
+const isPlainObject = (v: unknown): v is Record<string, any> =>
+	!!v && typeof v === "object" && !Array.isArray(v);
+const asArray = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+/** String value, or the fallback when the caller sent another type. */
+const asString = (v: unknown, fallback = ""): string =>
+	typeof v === "string" ? v : fallback;
+const asObject = (v: unknown): Record<string, any> =>
+	isPlainObject(v) ? v : {};
+/** Array of plain objects; non-objects (null, strings, numbers) are dropped. */
+const asObjectArray = <T = any>(v: unknown): T[] =>
+	asArray(v).filter(isPlainObject) as T[];
+/** Array of strings; a lone non-empty string becomes a one-item array. */
+const asStringArray = (v: unknown): string[] =>
+	typeof v === "string"
+		? v.trim()
+			? [v]
+			: []
+		: asArray(v).filter((x): x is string => typeof x === "string");
+/** Array of finite numbers; anything else is dropped. */
+const asNumberArray = (v: unknown): number[] =>
+	asArray(v).filter(
+		(x): x is number => typeof x === "number" && Number.isFinite(x),
+	);
+
+/**
  * Helper function to generate dashboard HTML content
  */
 function generateDashboardHTML(options: {
@@ -550,8 +581,10 @@ export async function executeClearThoughtOperation(
 		| "graph"
 		| "auto"
 		| undefined;
-	const patternParams =
-		((parameters as any).patternParams as Record<string, unknown>) || {};
+	const patternParams = asObject((parameters as any).patternParams) as Record<
+		string,
+		unknown
+	>;
 
 	const selectReasoningPattern = ():
 		| "chain"
@@ -730,7 +763,7 @@ export async function executeClearThoughtOperation(
 			 */
 			
 			// Use provided parameters or generate ideas
-			let ideas = (parameters.ideas as string[]) || [];
+			let ideas = asStringArray(parameters.ideas);
 			const techniques = (parameters.techniques as string[]) || ["brainstorming", "SCAMPER"];
 			const numIdeas = getParam("numIdeas", 8);
 			
@@ -1014,7 +1047,7 @@ export async function executeClearThoughtOperation(
 			 */
 			
 			const options = (parameters.options as any[]) || [];
-			const criteria = (parameters.criteria as any[]) || [];
+			const criteria = asObjectArray(parameters.criteria);
 			const possibleOutcomes = (parameters.possibleOutcomes as any[]) || [];
 			const analysisType = getParam("analysisType", "multi-criteria") as string;
 			
@@ -1087,7 +1120,7 @@ export async function executeClearThoughtOperation(
 			 */
 			
 			const claim = getParam("claim", "");
-			let premises = (parameters.premises as string[]) || [];
+			let premises = asStringArray(parameters.premises);
 			const stage = getParam("stage", "clarification");
 			
 			// Extract premises from prompt if not provided
@@ -1184,7 +1217,7 @@ export async function executeClearThoughtOperation(
 			
 			// Use provided parameters or default to empty arrays
 			const components = (parameters.components as string[]) || [];
-			const relationships = (parameters.relationships as any[]) || [];
+			const relationships = asObjectArray(parameters.relationships);
 			const feedbackLoops = (parameters.feedbackLoops as any[]) || [];
 			const emergentProperties = (parameters.emergentProperties as string[]) || [];
 			const leveragePoints = (parameters.leveragePoints as string[]) || [];
@@ -1378,9 +1411,9 @@ export async function executeClearThoughtOperation(
 			 * The model should identify the two domains being compared and map concepts between them.
 			 */
 			
-			let sourceDomain = getParam("sourceDomain", "");
-			let targetDomain = getParam("targetDomain", "");
-			let mappings = (parameters.mappings as AnalogyMapping[]) || [];
+			let sourceDomain = asString(parameters.sourceDomain);
+			let targetDomain = asString(parameters.targetDomain);
+			let mappings = asObjectArray<AnalogyMapping>(parameters.mappings);
 			let inferredInsights = (parameters.inferredInsights as string[]) || [];
 			
 			// If domains not provided, try to extract from prompt
@@ -1618,7 +1651,7 @@ export async function executeClearThoughtOperation(
 			const mode = getParam("mode", "summary");
 			let out: Record<string, unknown> = { mode };
 			if (mode === "summary") {
-				const arr = (parameters.data as number[]) || [];
+				const arr = asNumberArray(parameters.data);
 				const n = arr.length;
 				const mean = n ? arr.reduce((a, b) => a + b, 0) / n : 0;
 				const variance = n
@@ -1728,7 +1761,7 @@ export async function executeClearThoughtOperation(
 			
 			const steps = getParam("steps", 10);
 			const initial = (parameters.initial as Record<string, number>) || {};
-			const updateRules = (parameters.updateRules as Array<{target: string, rule: string}>) || [];
+			const updateRules = asObjectArray<{target: string; rule: string}>(parameters.updateRules);
 			
 			// Initialize state
 			let currentState = { ...initial };
@@ -2593,16 +2626,16 @@ export async function executeClearThoughtOperation(
 			}
 
 			// Process the current phase
-			const evidence = getParam("evidence", []) as string[];
+			const evidence = asStringArray(parameters.evidence);
 
 			// Create node for current phase
 			const node = createOODANode(prompt, oodaSession.currentPhase, evidence);
 
 			// Add hypotheses if provided
-			const hypotheses = getParam("hypotheses", []) as Array<{
+			const hypotheses = asObjectArray<{
 				statement: string;
 				confidence: number;
-			}>;
+			}>(parameters.hypotheses);
 
 			for (const hyp of hypotheses) {
 				const hypId = `hyp-${Date.now()}-${Math.random()}`;
@@ -2720,7 +2753,7 @@ export async function executeClearThoughtOperation(
 
 			// Process the current phase
 			const confidence = getParam("confidence", 0.5) as number;
-			const evidence = getParam("evidence", []) as string[];
+			const evidence = asStringArray(parameters.evidence);
 			const iteration =
 				ulyssesSession.currentPhase === "implementation"
 					? ulyssesSession.implementationIteration

@@ -6,6 +6,28 @@ import { enhanceResponseWithNotebook } from "./notebookEnhancement.js";
 // Initialize notebook store
 const notebookStore = new EphemeralNotebookStore();
 /**
+ * Parameter coercion helpers.
+ *
+ * `parameters` is an untyped bag (z.record(z.unknown())), so a caller can send
+ * any shape for any key. These helpers return the expected shape or an empty
+ * value, so handlers never throw on malformed input.
+ */
+const isPlainObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+const asArray = (v) => (Array.isArray(v) ? v : []);
+/** String value, or the fallback when the caller sent another type. */
+const asString = (v, fallback = "") => typeof v === "string" ? v : fallback;
+const asObject = (v) => isPlainObject(v) ? v : {};
+/** Array of plain objects; non-objects (null, strings, numbers) are dropped. */
+const asObjectArray = (v) => asArray(v).filter(isPlainObject);
+/** Array of strings; a lone non-empty string becomes a one-item array. */
+const asStringArray = (v) => typeof v === "string"
+    ? v.trim()
+        ? [v]
+        : []
+    : asArray(v).filter((x) => typeof x === "string");
+/** Array of finite numbers; anything else is dropped. */
+const asNumberArray = (v) => asArray(v).filter((x) => typeof x === "number" && Number.isFinite(x));
+/**
  * Helper function to generate dashboard HTML content
  */
 function generateDashboardHTML(options) {
@@ -438,7 +460,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
     const { prompt, parameters = {} } = args;
     // Optional reasoning pattern selection for sequential_thinking
     const specifiedPattern = parameters.pattern;
-    const patternParams = parameters.patternParams || {};
+    const patternParams = asObject(parameters.patternParams);
     const selectReasoningPattern = () => {
         if (specifiedPattern && specifiedPattern !== "auto")
             return specifiedPattern;
@@ -584,7 +606,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
              * The model should either provide structured ideas or the system will generate them using combinatorial techniques.
              */
             // Use provided parameters or generate ideas
-            let ideas = parameters.ideas || [];
+            let ideas = asStringArray(parameters.ideas);
             const techniques = parameters.techniques || ["brainstorming", "SCAMPER"];
             const numIdeas = getParam("numIdeas", 8);
             // Generate ideas if none provided
@@ -832,7 +854,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
              * - analysisType: 'expected-utility' | 'multi-criteria'
              */
             const options = parameters.options || [];
-            const criteria = parameters.criteria || [];
+            const criteria = asObjectArray(parameters.criteria);
             const possibleOutcomes = parameters.possibleOutcomes || [];
             const analysisType = getParam("analysisType", "multi-criteria");
             let result = {};
@@ -897,7 +919,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
              * - stage?: 'clarification' | 'assumptions' | 'reasons' | 'viewpoints' | 'consequences'
              */
             const claim = getParam("claim", "");
-            let premises = parameters.premises || [];
+            let premises = asStringArray(parameters.premises);
             const stage = getParam("stage", "clarification");
             // Extract premises from prompt if not provided
             if (premises.length === 0 && prompt) {
@@ -988,7 +1010,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
              */
             // Use provided parameters or default to empty arrays
             const components = parameters.components || [];
-            const relationships = parameters.relationships || [];
+            const relationships = asObjectArray(parameters.relationships);
             const feedbackLoops = parameters.feedbackLoops || [];
             const emergentProperties = parameters.emergentProperties || [];
             const leveragePoints = parameters.leveragePoints || [];
@@ -1160,9 +1182,9 @@ export async function executeClearThoughtOperation(sessionState, operation, args
              *
              * The model should identify the two domains being compared and map concepts between them.
              */
-            let sourceDomain = getParam("sourceDomain", "");
-            let targetDomain = getParam("targetDomain", "");
-            let mappings = parameters.mappings || [];
+            let sourceDomain = asString(parameters.sourceDomain);
+            let targetDomain = asString(parameters.targetDomain);
+            let mappings = asObjectArray(parameters.mappings);
             let inferredInsights = parameters.inferredInsights || [];
             // If domains not provided, try to extract from prompt
             if (!sourceDomain || !targetDomain) {
@@ -1368,7 +1390,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
             const mode = getParam("mode", "summary");
             let out = { mode };
             if (mode === "summary") {
-                const arr = parameters.data || [];
+                const arr = asNumberArray(parameters.data);
                 const n = arr.length;
                 const mean = n ? arr.reduce((a, b) => a + b, 0) / n : 0;
                 const variance = n
@@ -1465,7 +1487,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
              */
             const steps = getParam("steps", 10);
             const initial = parameters.initial || {};
-            const updateRules = parameters.updateRules || [];
+            const updateRules = asObjectArray(parameters.updateRules);
             // Initialize state
             let currentState = { ...initial };
             const trajectory = [];
@@ -2182,11 +2204,11 @@ export async function executeClearThoughtOperation(sessionState, operation, args
                 sessionState.setOODASession(oodaSessionId, oodaSession);
             }
             // Process the current phase
-            const evidence = getParam("evidence", []);
+            const evidence = asStringArray(parameters.evidence);
             // Create node for current phase
             const node = createOODANode(prompt, oodaSession.currentPhase, evidence);
             // Add hypotheses if provided
-            const hypotheses = getParam("hypotheses", []);
+            const hypotheses = asObjectArray(parameters.hypotheses);
             for (const hyp of hypotheses) {
                 const hypId = `hyp-${Date.now()}-${Math.random()}`;
                 oodaSession.hypotheses.set(hypId, {
@@ -2261,7 +2283,7 @@ export async function executeClearThoughtOperation(sessionState, operation, args
             }
             // Process the current phase
             const confidence = getParam("confidence", 0.5);
-            const evidence = getParam("evidence", []);
+            const evidence = asStringArray(parameters.evidence);
             const iteration = ulyssesSession.currentPhase === "implementation"
                 ? ulyssesSession.implementationIteration
                 : undefined;
